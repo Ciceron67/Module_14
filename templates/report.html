@@ -24,6 +24,14 @@
     <h2 class="display mb">Кривая долга</h2>
     {{ chart | safe }}
   </div>
+  
+  <div class="card mb rise" style="--d:.24s">
+    <div class="between">
+      <h2 class="display">🤖 ИИ-анализ отчёта</h2>
+      <button hx-get="/monthly_analysis?year={{ year }}&month={{ month }}" hx-target="#ai-report-analysis" hx-swap="innerHTML" onclick="this.textContent='Анализирую…'" class="btn btn-blue btn-sm">Запустить анализ</button>
+    </div>
+    <div id="ai-report-analysis" class="small muted mt">Нажми кнопку выше — ИИ проанализирует динамику трат и даст рекомендации по ускорению погашения долгов.</div>
+  </div>
 
   <div class="card flush rise" style="--d:.26s">
     <div class="card-h"><h2 class="display">Снимки по дням</h2></div>

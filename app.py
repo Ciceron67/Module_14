@@ -766,14 +766,113 @@ async def report(request: Request):
     avg_daily = reduced / days if days else 0
     months_left = months_to_payoff(cur_debt, 12.0, loan_pay) if loan_pay else float('inf')
     freedom = (datetime.date.today() + datetime.timedelta(days=months_left * 30)).strftime("%d.%m.%Y") if months_left != float('inf') else "∞"
+    
+    # Для ИИ-анализа передаем текущий год/месяц
+    now = datetime.datetime.now()
     return templates.TemplateResponse(request=request, name="report.html", context={
         "request": request, "chart": chart, "snaps": snaps, "reduced": reduced, "days": days,
-        "avg_daily": avg_daily, "freedom_date": freedom, "current_debt": cur_debt})
+        "avg_daily": avg_daily, "freedom_date": freedom, "current_debt": cur_debt,
+        "year": now.year, "month": now.month})
 
 
 # --- OLLAMA AI ---
+def get_ai_completion(prompt, system_prompt="Ты полезный финансовый ассистент.", max_tokens=500):
+    """Универсальная функция для запросов к Ollama."""
+    if not HAS_REQUESTS:
+        return "Нужен requests: pip install requests"
+    
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "system": system_prompt,
+        "stream": False,
+        "options": {"num_predict": max_tokens, "temperature": 0.7}
+    }
+    try:
+        r = requests.post(OLLAMA_URL, json=payload, timeout=60)
+        if r.status_code == 200:
+            return r.json().get("response", "Ошибка: пустой ответ.")
+        else:
+            return f"Ошибка API: {r.status_code}"
+    except requests.exceptions.ConnectionError:
+        return f"Не удалось подключиться к Ollama. Проверь: ollama serve"
+    except Exception as e:
+        return f"Ошибка: {str(e)}"
+
+def ai_categorize(description):
+    """Автоматически определяет категорию транзакции через ИИ."""
+    categories = ["Еда", "Транспорт", "Жилье", "Развлечения", "Здоровье", "Одежда", "Электроника", "Долги", "Доход", "Другое"]
+    prompt = f"Определи категорию для транзакции: '{description}'. Верни ТОЛЬКО одно слово из списка: {', '.join(categories)}. Никакого лишнего текста."
+    result = get_ai_completion(prompt, system_prompt="Ты классификатор финансовых транзакций.", max_tokens=10)
+    # Очистка ответа от лишних символов и кавычек
+    clean_result = result.strip().strip('"').strip("'").capitalize()
+    if clean_result in categories:
+        return clean_result
+    return "Другое"
+
+def ai_analyze_month(month_data_text, total_income, total_expense):
+    """Генерирует аналитический отчет за месяц через ИИ."""
+    prompt = f"""
+    Проанализируй финансовые данные за месяц:
+    Доходы: {total_income} ₽
+    Расходы: {total_expense} ₽
+    Детали транзакций: {month_data_text}
+    
+    Задача:
+    1. Выяви основные статьи расходов.
+    2. Найди подозрительные или чрезмерные траты.
+    3. Дай 3 конкретных совета по оптимизации бюджета.
+    
+    Ответ дай кратко, структурировано, на русском языке.
+    """
+    return get_ai_completion(prompt, system_prompt="Ты опытный финансовый аналитик.", max_tokens=800)
+
+@app.get("/auto_category")
+async def auto_category_route(desc: str):
+    """AJAX эндпоинт для авто-категоризации описания."""
+    if not desc:
+        return {"category": "Другое"}
+    category = ai_categorize(desc)
+    return {"category": category}
+
+@app.get("/monthly_analysis")
+async def monthly_analysis_route(year: int = None, month: int = None):
+    """AJAX эндпоинт для ИИ-анализа месяца."""
+    if year is None or month is None:
+        now = datetime.datetime.now()
+        year, month = now.year, now.month
+    
+    with get_db() as conn:
+        # Собираем данные за месяц
+        start = f"{year}-{month:02d}-01"
+        if month == 12:
+            end = f"{year+1}-01-01"
+        else:
+            end = f"{year}-{month+1:02d}-01"
+        
+        transactions = conn.execute(
+            "SELECT description, amount, category FROM transactions WHERE date >= ? AND date < ? ORDER BY date",
+            (start, end)
+        ).fetchall()
+        
+        income = sum(t['amount'] for t in transactions if t['amount'] > 0)
+        expense = abs(sum(t['amount'] for t in transactions if t['amount'] < 0))
+        
+        # Формируем текст для анализа
+        details = []
+        for t in transactions:
+            if t['amount'] < 0:
+                details.append(f"-{abs(t['amount']):.0f}₽ ({t['category'] or 'без категории'}): {t['description']}")
+        data_text = "\n".join(details[:50]) # Берем первые 50 транзакций чтобы не перегружать контекст
+        
+        analysis = ai_analyze_month(data_text, income, expense)
+    
+    safe = htmllib.escape(analysis).replace("\n", "<br>")
+    return HTMLResponse(f'<div style="line-height:1.6; white-space:pre-wrap;">{safe}</div>')
+
 @app.get("/advice")
 def advice():
+    """Старый эндпоинт с общим советом по долгам."""
     if not HAS_REQUESTS:
         return HTMLResponse('<div class="red">Нужен requests: <code>pip install requests</code></div>')
     with get_db() as conn:
@@ -911,9 +1010,26 @@ async def del_recurring(rp_id: int):
 
 if __name__ == "__main__":
     import uvicorn
+    import webbrowser
+    import threading
+    import time
+    
+    HOST = "127.0.0.1"
+    PORT = 8000
+    URL = f"http://{HOST}:{PORT}"
+    
+    def open_browser():
+        time.sleep(1.5)  # Ждем пока сервер запустится
+        webbrowser.open(URL)
+    
     print("🚀 Финмонитор v4.3 на http://127.0.0.1:8000")
     print(f"🤖 ИИ: {OLLAMA_MODEL} через Ollama")
     print("📊 Бюджет: лимиты по категориям")
     print("🔁 Планировщик: авто-платежи")
     print("💀 Смотри на долговые часы и злись. Злость — топливо для досрочных платежей.")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    print(f"🌐 Открываю браузер: {URL}")
+    
+    # Запускаем открытие браузера в отдельном потоке
+    threading.Thread(target=open_browser, daemon=True).start()
+    
+    uvicorn.run(app, host=HOST, port=PORT)
