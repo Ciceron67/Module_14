@@ -23,7 +23,7 @@ except ImportError:
 
 DB_NAME = "finance.db"
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen3.5:4b"
+OLLAMA_MODEL = "qwen3.5:0.8b"
 
 CARD_PRESETS = {
     "sber": {"name": "Сбер СберКарта", "credit_limit": 150000, "annual_rate": 27.9,
