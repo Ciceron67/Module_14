@@ -57,6 +57,12 @@ def init_db():
             date TEXT PRIMARY KEY, total_debt REAL, loans_debt REAL,
             cards_debt REAL, income_month REAL)''')
         conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS recurring_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, amount REAL NOT NULL,
+            category TEXT NOT NULL, day_of_month INTEGER NOT NULL, loan_id INTEGER, card_id INTEGER,
+            last_paid TEXT, active INTEGER DEFAULT 1)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS budget_limits (
+            category TEXT PRIMARY KEY, monthly_limit REAL NOT NULL, spent REAL DEFAULT 0)''')
         conn.execute("INSERT OR IGNORE INTO settings (key,value) VALUES ('monthly_income',300000),('daily_limit',1500)")
         cols = [r[1] for r in conn.execute("PRAGMA table_info(transactions)").fetchall()]
         if "card_id" not in cols:
@@ -104,6 +110,71 @@ def card_metrics(card):
         "min_payment": debt * card["min_payment_percent"] / 100,
         "monthly_interest": debt * card["annual_rate"] / 12 / 100,
     }
+
+
+def payoff_forecast(debt, annual_rate, monthly_payment, extra_payment=0):
+    """Расчёт прогноза закрытия долга с учётом дополнительных платежей"""
+    if monthly_payment + extra_payment <= 0:
+        return None, float('inf'), float('inf')
+    total_paid = 0
+    months = 0
+    remaining = debt
+    while remaining > 0 and months < 600:  # макс 50 лет
+        interest = remaining * annual_rate / 12 / 100
+        principal = min(monthly_payment + extra_payment - interest, remaining)
+        if principal <= 0:
+            break
+        remaining -= principal
+        total_paid += monthly_payment + extra_payment
+        months += 1
+    payoff_date = datetime.date.today() + datetime.timedelta(days=months * 30) if months < 600 else None
+    overpayment = total_paid - debt
+    return payoff_date, months, overpayment
+
+
+def process_recurring_payments(conn):
+    """Автоматическое создание повторяющихся платежей"""
+    today = datetime.date.today()
+    day = today.day
+    month_key = today.strftime("%Y-%m")
+    
+    recurring = conn.execute("SELECT * FROM recurring_payments WHERE active=1").fetchall()
+    for rp in recurring:
+        last_paid = rp["last_paid"]
+        if last_paid and last_paid.startswith(month_key):
+            continue  # уже оплачено в этом месяце
+        
+        # Создаём транзакцию
+        amount = rp["amount"]
+        if rp["category"] == "доход":
+            amount = -abs(amount)
+        else:
+            amount = abs(amount)
+        
+        conn.execute('''INSERT INTO transactions (date, amount, category, description, loan_id, card_id)
+                       VALUES (?, ?, ?, ?, ?, ?)''',
+                    (today.isoformat(), amount, rp["category"], f"Авто: {rp['name']}", 
+                     rp["loan_id"], rp["card_id"]))
+        
+        # Обновляем долг если это платёж по кредиту/карте
+        if rp["loan_id"]:
+            conn.execute("UPDATE loans SET current_debt = MAX(0, current_debt - ?) WHERE id=?",
+                        (rp["amount"], rp["loan_id"]))
+        elif rp["card_id"]:
+            conn.execute("UPDATE cards SET current_debt = MAX(0, current_debt - ?) WHERE id=?",
+                        (rp["amount"], rp["card_id"]))
+        
+        # Обновляем бюджет
+        if rp["category"] != "доход":
+            conn.execute('''INSERT INTO budget_limits (category, monthly_limit, spent)
+                           VALUES (?, 0, ?) ON CONFLICT(category) DO UPDATE SET spent = spent + ?''',
+                        (rp["category"], rp["amount"], rp["amount"]))
+        
+        # Обновляем дату последней оплаты
+        conn.execute("UPDATE recurring_payments SET last_paid=? WHERE id=?",
+                    (today.isoformat(), rp["id"]))
+    
+    conn.commit()
 
 
 def ensure_snapshot(conn):
@@ -169,6 +240,7 @@ async def lifespan(app: FastAPI):
     init_db()
     with get_db() as c:
         ensure_snapshot(c)
+        process_recurring_payments(c)
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -202,6 +274,12 @@ async def index(request: Request):
         month_income = -(conn.execute(
             "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE category='доход' AND date LIKE ?",
             (today[:7] + "%",)).fetchone()[0])
+        
+        # Бюджет по категориям
+        budget_limits = {row["category"]: row["monthly_limit"] for row in conn.execute("SELECT * FROM budget_limits WHERE monthly_limit > 0").fetchall()}
+        spent_by_category = {}
+        for row in conn.execute("SELECT category, SUM(amount) as spent FROM transactions WHERE amount > 0 AND category != 'долг' AND date LIKE ? GROUP BY category", (today[:7] + "%",)).fetchall():
+            spent_by_category[row["category"]] = row["spent"]
 
     loans_debt = sum(l["current_debt"] for l in loans)
     cards_debt = sum(c["current_debt"] for c in cards)
@@ -213,6 +291,10 @@ async def index(request: Request):
     debt_ratio = obligations / monthly_income * 100 if monthly_income else 0
     total_paid = total_initial - loans_debt
     progress = total_paid / total_initial * 100 if total_initial else 0
+
+    # Прогноз закрытия всех долгов
+    avg_rate = weighted_year / total_debt if total_debt > 0 else 0
+    payoff_date, months_to_freedom, total_overpayment = payoff_forecast(total_debt, avg_rate, obligations, extra_payment=0)
 
     # Проценты в реальном времени (для долговых часов)
     weighted_year = sum(l["current_debt"] * l["annual_rate"] for l in loans) + \
@@ -231,7 +313,10 @@ async def index(request: Request):
         "daily_limit": daily_limit, "spent_today": spent_today,
         "remaining_today": daily_limit - spent_today,
         "interest_per_second": interest_per_second, "interest_per_minute": interest_per_minute,
-        "interest_per_day": interest_per_day})
+        "interest_per_day": interest_per_day,
+        "payoff_date": payoff_date.strftime("%d.%m.%Y") if payoff_date else "∞",
+        "months_to_freedom": months_to_freedom,
+        "budget_limits": budget_limits, "spent_by_category": spent_by_category})
 
 
 # --- НАСТРОЙКИ (доход + лимит) ---
@@ -681,14 +766,113 @@ async def report(request: Request):
     avg_daily = reduced / days if days else 0
     months_left = months_to_payoff(cur_debt, 12.0, loan_pay) if loan_pay else float('inf')
     freedom = (datetime.date.today() + datetime.timedelta(days=months_left * 30)).strftime("%d.%m.%Y") if months_left != float('inf') else "∞"
+    
+    # Для ИИ-анализа передаем текущий год/месяц
+    now = datetime.datetime.now()
     return templates.TemplateResponse(request=request, name="report.html", context={
         "request": request, "chart": chart, "snaps": snaps, "reduced": reduced, "days": days,
-        "avg_daily": avg_daily, "freedom_date": freedom, "current_debt": cur_debt})
+        "avg_daily": avg_daily, "freedom_date": freedom, "current_debt": cur_debt,
+        "year": now.year, "month": now.month})
 
 
 # --- OLLAMA AI ---
+def get_ai_completion(prompt, system_prompt="Ты полезный финансовый ассистент.", max_tokens=500):
+    """Универсальная функция для запросов к Ollama."""
+    if not HAS_REQUESTS:
+        return "Нужен requests: pip install requests"
+    
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "system": system_prompt,
+        "stream": False,
+        "options": {"num_predict": max_tokens, "temperature": 0.7}
+    }
+    try:
+        r = requests.post(OLLAMA_URL, json=payload, timeout=60)
+        if r.status_code == 200:
+            return r.json().get("response", "Ошибка: пустой ответ.")
+        else:
+            return f"Ошибка API: {r.status_code}"
+    except requests.exceptions.ConnectionError:
+        return f"Не удалось подключиться к Ollama. Проверь: ollama serve"
+    except Exception as e:
+        return f"Ошибка: {str(e)}"
+
+def ai_categorize(description):
+    """Автоматически определяет категорию транзакции через ИИ."""
+    categories = ["Еда", "Транспорт", "Жилье", "Развлечения", "Здоровье", "Одежда", "Электроника", "Долги", "Доход", "Другое"]
+    prompt = f"Определи категорию для транзакции: '{description}'. Верни ТОЛЬКО одно слово из списка: {', '.join(categories)}. Никакого лишнего текста."
+    result = get_ai_completion(prompt, system_prompt="Ты классификатор финансовых транзакций.", max_tokens=10)
+    # Очистка ответа от лишних символов и кавычек
+    clean_result = result.strip().strip('"').strip("'").capitalize()
+    if clean_result in categories:
+        return clean_result
+    return "Другое"
+
+def ai_analyze_month(month_data_text, total_income, total_expense):
+    """Генерирует аналитический отчет за месяц через ИИ."""
+    prompt = f"""
+    Проанализируй финансовые данные за месяц:
+    Доходы: {total_income} ₽
+    Расходы: {total_expense} ₽
+    Детали транзакций: {month_data_text}
+    
+    Задача:
+    1. Выяви основные статьи расходов.
+    2. Найди подозрительные или чрезмерные траты.
+    3. Дай 3 конкретных совета по оптимизации бюджета.
+    
+    Ответ дай кратко, структурировано, на русском языке.
+    """
+    return get_ai_completion(prompt, system_prompt="Ты опытный финансовый аналитик.", max_tokens=800)
+
+@app.get("/auto_category")
+async def auto_category_route(desc: str):
+    """AJAX эндпоинт для авто-категоризации описания."""
+    if not desc:
+        return {"category": "Другое"}
+    category = ai_categorize(desc)
+    return {"category": category}
+
+@app.get("/monthly_analysis")
+async def monthly_analysis_route(year: int = None, month: int = None):
+    """AJAX эндпоинт для ИИ-анализа месяца."""
+    if year is None or month is None:
+        now = datetime.datetime.now()
+        year, month = now.year, now.month
+    
+    with get_db() as conn:
+        # Собираем данные за месяц
+        start = f"{year}-{month:02d}-01"
+        if month == 12:
+            end = f"{year+1}-01-01"
+        else:
+            end = f"{year}-{month+1:02d}-01"
+        
+        transactions = conn.execute(
+            "SELECT description, amount, category FROM transactions WHERE date >= ? AND date < ? ORDER BY date",
+            (start, end)
+        ).fetchall()
+        
+        income = sum(t['amount'] for t in transactions if t['amount'] > 0)
+        expense = abs(sum(t['amount'] for t in transactions if t['amount'] < 0))
+        
+        # Формируем текст для анализа
+        details = []
+        for t in transactions:
+            if t['amount'] < 0:
+                details.append(f"-{abs(t['amount']):.0f}₽ ({t['category'] or 'без категории'}): {t['description']}")
+        data_text = "\n".join(details[:50]) # Берем первые 50 транзакций чтобы не перегружать контекст
+        
+        analysis = ai_analyze_month(data_text, income, expense)
+    
+    safe = htmllib.escape(analysis).replace("\n", "<br>")
+    return HTMLResponse(f'<div style="line-height:1.6; white-space:pre-wrap;">{safe}</div>')
+
 @app.get("/advice")
 def advice():
+    """Старый эндпоинт с общим советом по долгам."""
     if not HAS_REQUESTS:
         return HTMLResponse('<div class="red">Нужен requests: <code>pip install requests</code></div>')
     with get_db() as conn:
@@ -716,9 +900,136 @@ def advice():
     return HTMLResponse(f'<div style="line-height:1.7">{safe}</div>')
 
 
+# --- ПЛАНИРОВЩИК БЮДЖЕТА ---
+@app.get("/budget_form")
+async def budget_form():
+    with get_db() as conn:
+        limits = conn.execute("SELECT * FROM budget_limits").fetchall()
+    cats = ["еда", "транспорт", "развлечения", "одежда", "здоровье", "образование", "разное"]
+    rows = ""
+    for cat in cats:
+        existing = next((l for l in limits if l["category"] == cat), None)
+        limit_val = existing["monthly_limit"] if existing else 0
+        rows += f'''<tr><td>{cat}</td><td><input type="number" step="0.01" name="limit_{cat}" value="{limit_val}" style="width:120px"></td></tr>'''
+    return HTMLResponse(f'''
+    <div class="modal-card">
+      <a href="/" class="x">✕</a>
+      <h3 class="display green" style="font-size:20px;margin-bottom:16px">📊 Лимиты бюджета</h3>
+      <form method="post" action="/save_budget" class="stack">
+        <table style="width:100%"><tbody>{rows}</tbody></table>
+        <button class="btn btn-green block">Сохранить лимиты</button>
+      </form>
+    </div>''')
+
+
+@app.post("/save_budget")
+async def save_budget(request: Request):
+    form_data = await request.form()
+    with get_db() as conn:
+        for key, value in form_data.items():
+            if key.startswith("limit_"):
+                cat = key[6:]
+                limit = float(value) if value else 0
+                if limit > 0:
+                    conn.execute('''INSERT INTO budget_limits (category, monthly_limit, spent) 
+                                   VALUES (?, ?, 0) ON CONFLICT(category) DO UPDATE SET monthly_limit=excluded.monthly_limit''',
+                                (cat, limit))
+                else:
+                    conn.execute("DELETE FROM budget_limits WHERE category=?", (cat,))
+        conn.commit()
+    return RedirectResponse("/", status_code=303)
+
+
+# --- ПОВТОРЯЮЩИЕСЯ ПЛАТЕЖИ ---
+@app.get("/recurring_form")
+async def recurring_form():
+    with get_db() as conn:
+        recurring = conn.execute("SELECT * FROM recurring_payments ORDER BY id").fetchall()
+        loans = conn.execute("SELECT id, name FROM loans").fetchall()
+        cards = conn.execute("SELECT id, name FROM cards").fetchall()
+    
+    loan_opts = '<option value="">Нет</option>' + "".join(f'<option value="{l["id"]}">{htmllib.escape(l["name"])}</option>' for l in loans)
+    card_opts = '<option value="">Нет</option>' + "".join(f'<option value="{c["id"]}">💳 {htmllib.escape(c["name"])}</option>' for c in cards)
+    
+    rows = ""
+    for rp in recurring:
+        status = "✅" if rp["active"] else "❌"
+        rows += f'''<tr><td>{status}</td><td>{htmllib.escape(rp["name"])}</td><td class="num">{rp["amount"]:,.0f} ₽</td><td>{rp["day_of_month"]}-е число</td>
+        <td><a href="/toggle_recurring/{rp["id"]}" style="color:var(--blue);font-size:12px">переключить</a> | <a href="/del_recurring/{rp["id"]}" style="color:var(--red);font-size:12px">удалить</a></td></tr>'''
+    
+    return HTMLResponse(f'''
+    <div class="modal-card" style="max-width:700px">
+      <a href="/" class="x">✕</a>
+      <h3 class="display green" style="font-size:20px;margin-bottom:10px">🔁 Повторяющиеся платежи</h3>
+      <p class="dim" style="margin-bottom:14px">Автоматически создаются каждый месяц в указанную дату</p>
+      {"<table style=\"width:100%;margin-bottom:16px\"><thead><tr><th></th><th>Название</th><th>Сумма</th><th>Дата</th><th></th></tr></thead><tbody>" + rows + "</tbody></table>" if rows else "<p class=\"muted\" style=\"padding:20px;text-align:center\">Пока нет повторяющихся платежей</p>"}
+      <hr style="border-color:#212b3a;margin:16px 0">
+      <h4 style="font-size:16px;margin-bottom:10px">Добавить новый</h4>
+      <form method="post" action="/add_recurring" class="stack">
+        <input class="inp" type="text" name="name" placeholder="Название (аренда, подписка)" required>
+        <input class="inp" type="number" step="0.01" name="amount" placeholder="Сумма" required>
+        <select class="inp" name="category"><option value="еда">Еда</option><option value="транспорт">Транспорт</option><option value="развлечения">Развлечения</option><option value="разное">Разное</option><option value="доход">Доход</option></select>
+        <input class="inp" type="number" name="day_of_month" placeholder="День месяца (1-31)" min="1" max="31" required>
+        <select class="inp" name="loan_id">{loan_opts}</select>
+        <select class="inp" name="card_id">{card_opts}</select>
+        <button class="btn btn-green block">Добавить</button>
+      </form>
+    </div>''')
+
+
+@app.post("/add_recurring")
+async def add_recurring(name: str = Form(...), amount: float = Form(...), category: str = Form(...),
+                        day_of_month: int = Form(...), loan_id: str = Form(""), card_id: str = Form("")):
+    lid = int(loan_id) if loan_id else None
+    cid = int(card_id) if card_id else None
+    with get_db() as conn:
+        conn.execute('''INSERT INTO recurring_payments (name, amount, category, day_of_month, loan_id, card_id, active)
+                       VALUES (?, ?, ?, ?, ?, ?, 1)''',
+                    (name, amount, category, day_of_month, lid, cid))
+        conn.commit()
+    return RedirectResponse("/recurring_form", status_code=303)
+
+
+@app.get("/toggle_recurring/{rp_id}")
+async def toggle_recurring(rp_id: int):
+    with get_db() as conn:
+        rp = conn.execute("SELECT active FROM recurring_payments WHERE id=?", (rp_id,)).fetchone()
+        if rp:
+            conn.execute("UPDATE recurring_payments SET active=? WHERE id=?", (0 if rp["active"] else 1, rp_id))
+            conn.commit()
+    return RedirectResponse("/recurring_form", status_code=303)
+
+
+@app.get("/del_recurring/{rp_id}")
+async def del_recurring(rp_id: int):
+    with get_db() as conn:
+        conn.execute("DELETE FROM recurring_payments WHERE id=?", (rp_id,))
+        conn.commit()
+    return RedirectResponse("/recurring_form", status_code=303)
+
+
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Финмонитор v4.2 на http://127.0.0.1:8000")
+    import webbrowser
+    import threading
+    import time
+    
+    HOST = "127.0.0.1"
+    PORT = 8000
+    URL = f"http://{HOST}:{PORT}"
+    
+    def open_browser():
+        time.sleep(1.5)  # Ждем пока сервер запустится
+        webbrowser.open(URL)
+    
+    print("🚀 Финмонитор v4.3 на http://127.0.0.1:8000")
     print(f"🤖 ИИ: {OLLAMA_MODEL} через Ollama")
+    print("📊 Бюджет: лимиты по категориям")
+    print("🔁 Планировщик: авто-платежи")
     print("💀 Смотри на долговые часы и злись. Злость — топливо для досрочных платежей.")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    print(f"🌐 Открываю браузер: {URL}")
+    
+    # Запускаем открытие браузера в отдельном потоке
+    threading.Thread(target=open_browser, daemon=True).start()
+    
+    uvicorn.run(app, host=HOST, port=PORT)

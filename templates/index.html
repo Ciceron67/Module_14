@@ -73,9 +73,14 @@
   <div class="card mb rise" style="--d:.36s">
     <div class="between">
       <h2 class="display">🤖 ИИ-советник <span class="dim" style="font-family:var(--body);font-weight:400">qwen3.5:4b · ollama · локально</span></h2>
-      <button hx-get="/advice" hx-target="#ai-out" hx-swap="innerHTML" onclick="this.textContent='Думаю…'" class="btn btn-green btn-sm">Спросить ИИ</button>
+      <div>
+        <button hx-get="/monthly_analysis" hx-target="#ai-analysis" hx-swap="innerHTML" onclick="this.textContent='Анализирую…'" class="btn btn-blue btn-sm">📊 Анализ месяца</button>
+        <button hx-get="/advice" hx-target="#ai-out" hx-swap="innerHTML" onclick="this.textContent='Думаю…'" class="btn btn-green btn-sm">Спросить ИИ</button>
+      </div>
     </div>
-    <div id="ai-out" class="small muted mt">Нажми «Спросить ИИ» — локальная нейронка проанализирует долг и даст советы. В интернет ничего не уходит.</div>
+    <div id="ai-out" class="small muted mt">Нажми «Спросить ИИ» — локальная нейронка проанализирует долг и даст советы по выходу из кредитного рабства.</div>
+    <hr style="border:0; border-top:1px solid var(--line); margin:15px 0;">
+    <div id="ai-analysis" class="small muted">Нажми «Анализ месяца» — ИИ изучит твои траты за текущий месяц, найдет лишние расходы и даст советы по оптимизации бюджета.</div>
   </div>
 
   {% if cards %}
