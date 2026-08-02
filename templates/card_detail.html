@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ card.name }}</title>
+<link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script></head>
+<body>
+<div class="wrap">
+  <header class="rise" style="--d:.02s">
+    <a href="/cards" class="a orange">← Карты</a>
+    <div class="between" style="margin-top:8px">
+      <h1 class="display orange">💳 {{ card.name }}</h1>
+      <button hx-get="/pay_card_form/{{ card.id }}" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden')" class="btn btn-orange">💸 Внести платёж</button>
+    </div>
+    <p class="dim">грейс {{ card.grace_period_days }} дн · кэшбэк {{ card.cashback_percent }}%</p>
+  </header>
+
+  <div class="grid g2 mt mb">
+    <div class="card hov rise" style="--d:.06s">
+      <p class="label mb">Параметры</p>
+      <div class="stack small">
+        <p class="between"><span class="muted">Лимит</span><strong class="num">{{ card.credit_limit | int | format_currency }} ₽</strong></p>
+        <p class="between"><span class="muted">Долг</span><strong class="num red">{{ card.current_debt | int | format_currency }} ₽</strong></p>
+        <p class="between"><span class="muted">Доступно</span><strong class="num green">{{ card.available | int | format_currency }} ₽</strong></p>
+        <p class="between"><span class="muted">Ставка</span><strong class="num">{{ card.annual_rate }}%</strong></p>
+      </div>
+      <div class="bar"><i class="f-orange" style="width:{{ card.utilization }}%"></i></div>
+      <p class="dim num" style="margin-top:8px">утилизация {{ card.utilization | format_percent }}%</p>
+    </div>
+    <div class="card hov rise" style="--d:.1s">
+      <p class="label mb">Расчёт</p>
+      <div class="stack small">
+        <p class="between"><span class="muted">Мин. платёж</span><strong class="num orange">{{ card.min_payment | int | format_currency }} ₽</strong></p>
+        <p class="between"><span class="muted">Проценты/мес вне грейса</span><strong class="num red">{{ card.monthly_interest | int | format_currency }} ₽</strong></p>
+      </div>
+      <div class="hint mt">💡 Плати долг полностью до конца грейса — банк не получит ни копейки. Минимальный платёж — ловушка: проценты капают на весь долг.</div>
+    </div>
+  </div>
+
+  <div class="card flush rise" style="--d:.14s">
+    <div class="card-h"><h2 class="display">Операции по карте</h2></div>
+    {% if transactions %}
+    <table><thead><tr><th>Дата</th><th>Категория</th><th>Описание</th><th class="r">Сумма</th></tr></thead><tbody>
+      {% for t in transactions %}<tr><td class="num">{{ t.date }}</td><td><span class="badge b-gray">{{ t.category }}</span></td><td class="muted">{{ t.description or "-" }}</td><td class="r num {% if t.amount > 0 %}red{% else %}green{% endif %}" style="font-weight:700">{{ t.amount | int | format_currency }} ₽</td></tr>{% endfor %}
+    </tbody></table>
+    {% else %}<p class="muted" style="padding:30px;text-align:center">Операций нет.</p>{% endif %}
+  </div>
+</div>
+<div id="modal" class="modal hidden"></div>
+</body>
+</html>

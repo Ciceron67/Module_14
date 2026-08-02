@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ loan.name }}</title>
+<link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script></head>
+<body>
+<div class="wrap">
+  <header class="rise" style="--d:.02s">
+    <a href="/loans" class="a">← Кредиты</a>
+    <div class="between" style="margin-top:8px">
+      <h1 class="display">{{ loan.name }}</h1>
+      <button hx-get="/pay_loan_form/{{ loan.id }}" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden')" class="btn btn-green">💸 Внести платёж</button>
+    </div>
+    <p class="dim">начало {{ loan.start_date }}</p>
+  </header>
+
+  <div class="grid g2 mt mb">
+    <div class="card hov rise" style="--d:.06s">
+      <p class="label mb">Параметры</p>
+      <div class="stack small">
+        <p class="between"><span class="muted">Начальная сумма</span><strong class="num">{{ loan.initial_amount | int | format_currency }} ₽</strong></p>
+        <p class="between"><span class="muted">Остаток</span><strong class="num red">{{ loan.current_debt | int | format_currency }} ₽</strong></p>
+        <p class="between"><span class="muted">Ставка</span><strong class="num">{{ loan.annual_rate }}%</strong></p>
+        <p class="between"><span class="muted">Платёж/мес</span><strong class="num green">{{ loan.monthly_payment | int | format_currency }} ₽</strong></p>
+      </div>
+      <div class="bar"><i class="f-red" style="width:{{ loan.progress_percent }}%"></i></div>
+      <p class="dim num" style="margin-top:8px">{{ loan.progress_percent | format_percent }}% погашено</p>
+    </div>
+    <div class="card hov rise" style="--d:.1s">
+      <p class="label mb">Прогноз</p>
+      <div class="stack small">
+        <p class="between"><span class="muted">Осталось</span><strong class="num">{{ loan.months_to_payoff }} мес</strong></p>
+        <p class="between"><span class="muted">Дата погашения</span><strong class="num">{{ loan.payoff_date }}</strong></p>
+        <p class="between"><span class="muted">Переплата</span><strong class="num red">{{ loan.total_overpayment | format_currency }} ₽</strong></p>
+        <p class="between"><span class="muted">Платёж → проценты</span><strong class="num orange">{{ loan.interest_payment | int | format_currency }} ₽</strong></p>
+        <p class="between"><span class="muted">Платёж → тело</span><strong class="num green">{{ loan.principal_payment | int | format_currency }} ₽</strong></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card flush rise" style="--d:.14s">
+    <div class="card-h"><h2 class="display">История платежей</h2></div>
+    {% if transactions %}
+    <table><thead><tr><th>Дата</th><th>Описание</th><th class="r">Сумма</th></tr></thead><tbody>
+      {% for t in transactions %}<tr><td class="num">{{ t.date }}</td><td class="muted">{{ t.description or "-" }}</td><td class="r num green" style="font-weight:700">{{ t.amount | int | format_currency }} ₽</td></tr>{% endfor %}
+    </tbody></table>
+    {% else %}<p class="muted" style="padding:30px;text-align:center">Платежей пока нет.</p>{% endif %}
+  </div>
+</div>
+<div id="modal" class="modal hidden"></div>
+</body>
+</html>

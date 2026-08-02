@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Финмонитор Кванта</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="between rise" style="--d:.02s">
+    <div>
+      <p class="eyebrow"><span class="dot"></span>Побег из рабства · live</p>
+      <h1 class="display">Финмонитор <span class="green">Кванта</span></h1>
+    </div>
+    <nav class="nav">
+      <a href="/loans">Кредиты</a><a href="/cards">Карты</a><a href="/report">📈 Отчёт</a>
+      <a href="#" hx-get="/settings_form" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden');return false;">⚙</a>
+    </nav>
+  </header>
+
+  <!-- ДОЛГОВЫЕ ЧАСЫ -->
+  <div class="card clock rise mb" id="debt-clock" style="--d:.05s"
+       data-debt="{{ total_debt }}" data-persec="{{ interest_per_second }}">
+    <p class="eyebrow"><span class="dot"></span>Твой долг прямо сейчас</p>
+    <p class="clock-num num" id="clock-num">{{ total_debt | int | format_currency }} ₽</p>
+    <p class="clock-accr num" id="clock-accr">+0.0000 ₽</p>
+    <div class="clock-sub">
+      <span>💸 капает <b class="num orange">{{ interest_per_minute | format_percent }}</b> ₽/мин</span>
+      <span><b class="num orange">{{ interest_per_day | int | format_currency }}</b> ₽/день</span>
+      <span class="muted">визуализация начисления процентов в реальном времени</span>
+    </div>
+  </div>
+
+  <div class="grid g3 mb">
+    <div class="card hov rise" style="--d:.08s">
+      <p class="label">Общий долг</p>
+      <p class="big num red">{{ total_debt | int | format_currency }} ₽</p>
+      <p class="between small muted num" style="margin-top:10px">
+        <span>кредиты {{ loans_debt | int | format_currency }}</span><span>карты {{ cards_debt | int | format_currency }}</span>
+      </p>
+      <div class="bar"><i class="f-red" style="width:{{ progress_percent }}%"></i></div>
+      <p class="dim num" style="margin-top:8px">свободно {{ total_paid | int | format_currency }} ₽ ({{ progress_percent | format_percent }}%)</p>
+    </div>
+
+    <div class="card hov rise" style="--d:.12s">
+      <p class="label">Обязательства / мес</p>
+      <p class="big num orange">{{ obligations | int | format_currency }} ₽</p>
+      <p class="between small muted num" style="margin-top:10px">
+        <span>кредиты {{ loan_pay | int | format_currency }}</span><span>карты {{ card_min | int | format_currency }}</span>
+      </p>
+      <p class="small num {% if debt_ratio > 50 %}red{% else %}muted{% endif %}" style="margin-top:12px">
+        нагрузка {{ debt_ratio | format_percent }}% от {{ monthly_income | int | format_currency }} ₽
+      </p>
+    </div>
+
+    <div class="card col rise" style="--d:.16s">
+      <button hx-get="/income_form" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden')" class="btn btn-green block">+ Доход</button>
+      <button hx-get="/add_form" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden')" class="btn btn-ghost block">+ Транзакция</button>
+      <button hx-get="/add_loan_form" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden')" class="btn btn-blue block">+ Кредит</button>
+      <button hx-get="/add_card_form" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden')" class="btn btn-orange block">+ Кредитка</button>
+    </div>
+  </div>
+
+  <div class="grid g4 mb">
+    <div class="card hov rise" style="--d:.2s"><p class="label">Лимит/день</p><p class="mid num green">{{ daily_limit | int | format_currency }} ₽</p></div>
+    <div class="card hov rise" style="--d:.24s"><p class="label">Потрачено</p><p class="mid num {% if spent_today > daily_limit %}red{% endif %}">{{ spent_today | int | format_currency }} ₽</p></div>
+    <div class="card hov rise" style="--d:.28s"><p class="label">Осталось</p><p class="mid num {% if remaining_today < 0 %}red{% else %}green{% endif %}">{{ remaining_today | int | format_currency }} ₽</p></div>
+    <div class="card hov rise" style="--d:.32s"><p class="label">Доход за месяц</p><p class="mid num green">{{ fact_income | int | format_currency }} ₽</p></div>
+  </div>
+
+  <div class="card mb rise" style="--d:.36s">
+    <div class="between">
+      <h2 class="display">🤖 ИИ-советник <span class="dim" style="font-family:var(--body);font-weight:400">qwen3.5:4b · ollama · локально</span></h2>
+      <button hx-get="/advice" hx-target="#ai-out" hx-swap="innerHTML" onclick="this.textContent='Думаю…'" class="btn btn-green btn-sm">Спросить ИИ</button>
+    </div>
+    <div id="ai-out" class="small muted mt">Нажми «Спросить ИИ» — локальная нейронка проанализирует долг и даст советы. В интернет ничего не уходит.</div>
+  </div>
+
+  {% if cards %}
+  <div class="card flush mb rise" style="--d:.4s">
+    <div class="card-h"><h2 class="display orange">💳 Кредитки</h2><a href="/cards" class="a orange">все →</a></div>
+    {% for c in cards %}
+    <a href="/card/{{ c.id }}" class="lrow between">
+      <span><strong class="orange">{{ c.name }}</strong><br><span class="small muted num">долг {{ c.current_debt | int | format_currency }} / {{ c.credit_limit | int | format_currency }} ₽</span></span>
+      <span class="r"><strong class="num">{{ c.annual_rate }}%</strong><br><span class="dim">грейс {{ c.grace_period_days }} дн</span></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if loans %}
+  <div class="card flush mb rise" style="--d:.44s">
+    <div class="card-h"><h2 class="display">Кредиты</h2><a href="/loans" class="a">все →</a></div>
+    {% for l in loans %}
+    <a href="/loan/{{ l.id }}" class="lrow between">
+      <span><strong class="green">{{ l.name }}</strong><br><span class="small muted num">остаток {{ l.current_debt | int | format_currency }} ₽</span></span>
+      <span class="r"><strong class="num">{{ l.monthly_payment | int | format_currency }} ₽/мес</strong><br><span class="dim">{{ l.annual_rate }}%</span></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="card flush rise" style="--d:.48s">
+    <div class="card-h"><h2 class="display">Операции</h2><button hx-get="/transactions_table" hx-target="#tx-list" class="a">обновить</button></div>
+    <div id="tx-list" hx-get="/transactions_table" hx-trigger="load"><p class="muted" style="padding:30px;text-align:center">Загрузка…</p></div>
+  </div>
+
+</div>
+<div id="modal" class="modal hidden"></div>
+
+<script>
+// ДОЛГОВЫЕ ЧАСЫ — проценты капают в реальном времени
+(function(){
+  var el = document.getElementById('debt-clock');
+  if(!el) return;
+  var base = parseFloat(el.dataset.debt) || 0;
+  var persec = parseFloat(el.dataset.persec) || 0;
+  var numEl = document.getElementById('clock-num');
+  var accrEl = document.getElementById('clock-accr');
+  var start = Date.now();
+  function fmt2(n){ return n.toLocaleString('ru-RU',{minimumFractionDigits:2, maximumFractionDigits:2}); }
+  function fmt4(n){ return n.toLocaleString('ru-RU',{minimumFractionDigits:4, maximumFractionDigits:4}); }
+  function tick(){
+    var e = (Date.now() - start) / 1000;
+    var accrued = persec * e;
+    numEl.textContent = fmt2(base + accrued) + ' ₽';
+    accrEl.textContent = '+' + fmt4(accrued) + ' ₽';
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>

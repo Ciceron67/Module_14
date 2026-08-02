@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Отчёт · Динамика освобождения</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="rise" style="--d:.02s">
+    <a href="/" class="a">← На главную</a>
+    <h1 class="display">📈 Динамика <span class="green">освобождения</span></h1>
+    <p class="muted small" style="margin-top:6px">Снимки долга пишутся автоматически каждый день. Чем ниже кривая — тем ближе свобода.</p>
+  </header>
+
+  <div class="grid g4 mt mb">
+    <div class="card hov rise" style="--d:.06s"><p class="label">Долг сейчас</p><p class="mid num red">{{ current_debt | int | format_currency }} ₽</p></div>
+    <div class="card hov rise" style="--d:.1s"><p class="label">Снижено</p><p class="mid num green">−{{ reduced | int | format_currency }} ₽</p></div>
+    <div class="card hov rise" style="--d:.14s"><p class="label">Темп</p><p class="mid num">{{ avg_daily | int | format_currency }} ₽/день</p></div>
+    <div class="card hov rise" style="--d:.18s"><p class="label">Дата свободы</p><p class="mid num green">{{ freedom_date }}</p></div>
+  </div>
+
+  <div class="card mb rise" style="--d:.22s">
+    <h2 class="display mb">Кривая долга</h2>
+    {{ chart | safe }}
+  </div>
+
+  <div class="card flush rise" style="--d:.26s">
+    <div class="card-h"><h2 class="display">Снимки по дням</h2></div>
+    <table>
+      <thead><tr><th>Дата</th><th class="r">Кредиты</th><th class="r">Карты</th><th class="r">Всего</th><th class="r">Доход/мес</th></tr></thead>
+      <tbody>
+      {% for s in snaps | reverse %}
+        <tr>
+          <td class="num">{{ s.date }}</td>
+          <td class="r num blue">{{ s.loans_debt | int | format_currency }}</td>
+          <td class="r num orange">{{ s.cards_debt | int | format_currency }}</td>
+          <td class="r num red" style="font-weight:700">{{ s.total_debt | int | format_currency }}</td>
+          <td class="r num green">{{ s.income_month | int | format_currency }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

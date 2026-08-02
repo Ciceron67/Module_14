@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Кредиты</title>
+<link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script></head>
+<body>
+<div class="wrap">
+  <header class="between rise" style="--d:.02s">
+    <div><a href="/" class="a">← Главная</a><h1 class="display">Кредиты</h1></div>
+    <button hx-get="/add_loan_form" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden')" class="btn btn-green">+ Кредит</button>
+  </header>
+  {% if not loans %}
+    <div class="card mt" style="text-align:center;padding:50px"><p class="muted">Кредитов нет. Ты свободен, блядь!</p></div>
+  {% else %}
+  <div class="stack mt">
+    {% for l in loans %}
+    <div class="card hov rise" style="--d:{{ loop.index * 0.05 }}s">
+      <div class="between">
+        <div><h2 class="display green">{{ l.name }}</h2><p class="dim">начало {{ l.start_date }}</p></div>
+        <div class="row">
+          <a href="/loan/{{ l.id }}" class="a blue">детали →</a>
+          <a href="/del_loan/{{ l.id }}" class="a" style="color:var(--red)" onclick="return confirm('Удалить кредит?')">удалить</a>
+        </div>
+      </div>
+      <div class="grid g4 mt">
+        <div><p class="label">Остаток</p><p class="mid num red">{{ l.current_debt | int | format_currency }} ₽</p></div>
+        <div><p class="label">Ставка</p><p class="mid num">{{ l.annual_rate }}%</p></div>
+        <div><p class="label">Платёж/мес</p><p class="mid num green">{{ l.monthly_payment | int | format_currency }} ₽</p></div>
+        <div><p class="label">Осталось</p><p class="mid num">{{ l.months_to_payoff }} мес</p></div>
+      </div>
+      <div class="bar"><i class="f-red" style="width:{{ l.progress_percent }}%"></i></div>
+      <p class="between small muted num" style="margin-top:8px">
+        <span>погашено {{ l.progress_percent | format_percent }}%</span>
+        <span>переплата {{ l.total_overpayment | format_currency }} ₽</span>
+      </p>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+<div id="modal" class="modal hidden"></div>
+</body>
+</html>

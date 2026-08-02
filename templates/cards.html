@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Кредитки</title>
+<link rel="stylesheet" href="/static/style.css"><script src="/static/htmx.min.js" defer></script></head>
+<body>
+<div class="wrap">
+  <header class="between rise" style="--d:.02s">
+    <div><a href="/" class="a">← Главная</a><h1 class="display orange">💳 Кредитные карты</h1></div>
+    <button hx-get="/add_card_form" hx-target="#modal" hx-swap="innerHTML" onclick="modal.classList.remove('hidden')" class="btn btn-orange">+ Кредитка</button>
+  </header>
+  {% if not cards %}
+    <div class="card mt" style="text-align:center;padding:50px"><p class="muted">Кредиток нет. Банки плачут.</p></div>
+  {% else %}
+  <div class="stack mt">
+    {% for c in cards %}
+    <div class="card hov rise" style="--d:{{ loop.index * 0.05 }}s">
+      <div class="between">
+        <div><h2 class="display orange">💳 {{ c.name }}</h2><p class="dim">грейс {{ c.grace_period_days }} дн · кэшбэк {{ c.cashback_percent }}%</p></div>
+        <div class="row">
+          <a href="/card/{{ c.id }}" class="a blue">детали →</a>
+          <a href="/del_card/{{ c.id }}" class="a" style="color:var(--red)" onclick="return confirm('Удалить карту?')">удалить</a>
+        </div>
+      </div>
+      <div class="grid g4 mt">
+        <div><p class="label">Долг</p><p class="mid num red">{{ c.current_debt | int | format_currency }} ₽</p></div>
+        <div><p class="label">Доступно</p><p class="mid num green">{{ c.available | int | format_currency }} ₽</p></div>
+        <div><p class="label">Мин. платёж</p><p class="mid num orange">{{ c.min_payment | int | format_currency }} ₽</p></div>
+        <div><p class="label">Ставка</p><p class="mid num">{{ c.annual_rate }}%</p></div>
+      </div>
+      <div class="bar"><i class="f-orange" style="width:{{ c.utilization }}%"></i></div>
+      <p class="between small muted num" style="margin-top:8px">
+        <span>утилизация {{ c.utilization | format_percent }}%</span>
+        <span>вне грейса ~{{ c.monthly_interest | int | format_currency }} ₽/мес</span>
+      </p>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+<div id="modal" class="modal hidden"></div>
+</body>
+</html>
